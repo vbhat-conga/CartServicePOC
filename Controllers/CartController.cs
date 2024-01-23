@@ -1,8 +1,10 @@
 ﻿using CartServicePOC.DataModel;
+using CartServicePOC.Helper;
 using CartServicePOC.Model;
 using CartServicePOC.Service;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System.Diagnostics;
 using System.Net;
 
 namespace CartServicePOC.Controllers
@@ -14,6 +16,7 @@ namespace CartServicePOC.Controllers
         private readonly ILogger<CartController> _logger;
         private readonly ICartService _cartService;
         private readonly ICartItemService _cartItemService;
+        private readonly ActivitySource _activitySource = new(Instrumentation.ActivitySourceName);
         public CartController(ILogger<CartController> logger, ICartService cartService, ICartItemService cartItemService)
         {
             _logger = logger;
@@ -25,6 +28,7 @@ namespace CartServicePOC.Controllers
         [HttpPost]
         public async Task<ActionResult<ApiResponse<CreateCartResponse>>> CreateCart(CartRequest createCartRequests)
         {
+            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : CreateCart", ActivityKind.Server);
             if (!ModelState.IsValid)
             {
                 return BadRequest(ModelState);
@@ -55,6 +59,8 @@ namespace CartServicePOC.Controllers
         [HttpPost("{id}/items")]
         public async Task<ActionResult<ApiResponse<string>>> AddCartItem([FromRoute] Guid id, List<CartItemRequest> cartItemRequests)
         {
+            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : AddCartItem", ActivityKind.Server);
+            activity?.SetTag("CartId", id);
             if (!ModelState.IsValid)
             {
                 return BadRequest(ModelState);
@@ -76,6 +82,8 @@ namespace CartServicePOC.Controllers
         [HttpPut("{id}/items")]
         public async Task<ActionResult<ApiResponse<string>>> UpdateCartItems([FromRoute] Guid id, List<CartItemUpdateRequest> cartItemUpdates)
         {
+            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : UpdateCartItems", ActivityKind.Server);
+            activity?.SetTag("CartId", id);
             if (!ModelState.IsValid)
             {
                 return BadRequest(ModelState);
@@ -99,7 +107,7 @@ namespace CartServicePOC.Controllers
         [HttpGet("{id}/status")]
         public async Task<ActionResult<ApiResponse<CartData>>> GetCartStatus([FromRoute] Guid id)
         {
-
+            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : UpdateCartItems", ActivityKind.Server);
             if (!await _cartService.IsCartExists(id))
             {
                 return BadRequest("cart id doesn't exist");

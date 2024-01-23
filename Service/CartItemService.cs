@@ -1,13 +1,10 @@
 ﻿using CartServicePOC.DataModel;
 using CartServicePOC.Extensions;
+using CartServicePOC.Helper;
 using CartServicePOC.Model;
 using Microsoft.EntityFrameworkCore;
-using Newtonsoft.Json;
 using StackExchange.Redis;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Text.Json;
+using System.Diagnostics;
 using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace CartServicePOC.Service
@@ -17,6 +14,7 @@ namespace CartServicePOC.Service
         private readonly CartDbContext _dbContext;
         private readonly IDatabase _database;
         private readonly ILogger<CartItemService> _logger;
+        private readonly ActivitySource _activitySource = new(Instrumentation.ActivitySourceName);
         public CartItemService(CartDbContext dbContext, ILogger<CartItemService> logger)
         {
             _dbContext = dbContext;
@@ -28,6 +26,7 @@ namespace CartServicePOC.Service
 
         public async Task<IEnumerable<Guid>> AddLineItem(IEnumerable<CartItemRequest> cartItemRequests, Guid cartId)
         {
+            using var activity = _activitySource.StartActivity($"{nameof(CartService)}: AddLineItem", ActivityKind.Server);
             var batch = _database.CreateBatch();
             var taskList = new List<Task>();
             var batch1 = _database.CreateBatch();
@@ -43,7 +42,7 @@ namespace CartServicePOC.Service
                     LineType = cartItem.LineType,
                     Quantity = cartItem.Quantity,
                     PrimaryTaxLineNumber = cartItem.PrimaryTaxLineNumber,
-                    ProductId=cartItem.Product.Id
+                    ProductId = cartItem.Product.Id
                 };
                 itemData.Add(item);
                 var id = item.CartItemId.ToString();
@@ -56,14 +55,13 @@ namespace CartServicePOC.Service
             batch1.Execute();
             //var jsonString = JsonSerializer.Serialize(itemData);
             //var redisTask = _database.StringSetAsync($"s-cpq-{CartId}-lines", jsonString);
-           // var sqlTask = _dbContext.CartItemDatas.AddRangeAsync(itemData);
+            // var sqlTask = _dbContext.CartItemDatas.AddRangeAsync(itemData);
             //await redisTask;
             await Task.WhenAll(taskList);
             await Task.WhenAll(taskList2);
             //await sqlTask;
             //await _dbContext.SaveChangesAsync();
-            //var listData = itemData.Select(x => x.CartItemId).OrderBy(y=>y).ToList();
-            //await File.WriteAllTextAsync(@"C:\Users\vbhat\source\repos\CartServicePOC\bin\Debug\net7.0\test2.txt", string.Join(",", listData));
+
             return itemData.Select(x => x.CartItemId);
         }
 
@@ -71,38 +69,42 @@ namespace CartServicePOC.Service
 
         public async Task PublishMessage(Guid cartId, IEnumerable<CartItemRequest> cartItemRequest)
         {
-            var result = await _dbContext.Carts.SingleOrDefaultAsync(x=>x.CartId == cartId);
-            if(result == null)
-                return;
-          
-            var cartMessage = new CartMessage
+            using var activity = _activitySource.StartActivity($"{nameof(CartService)}: PublishMessage", ActivityKind.Server);
             {
-                CartId = cartId,
-                CartItems = cartItemRequest,
-                PriceListId = result.PriceListId
-            };
-            var nameValueEntry = new NameValueEntry[]
-            {
-                new NameValueEntry(nameof(cartItemRequest),JsonSerializer.Serialize(cartMessage))
-            };
+                var result = await _dbContext.Carts.SingleOrDefaultAsync(x => x.CartId == cartId);
+                if (result == null)
+                    return;
 
-            await _database.StreamAddAsync("config-stream", nameValueEntry);
+                var cartMessage = new CartMessage
+                {
+                    CartId = cartId,
+                    CartItems = cartItemRequest,
+                    PriceListId = result.PriceListId
+                };
+                var nameValueEntry = new NameValueEntry[]
+                {
+                new NameValueEntry(nameof(cartItemRequest),JsonSerializer.Serialize(cartMessage))
+                };
+
+                await _database.StreamAddAsync("config-stream", nameValueEntry);
+            }
         }
 
         public async Task<bool> UpdateCartItem(IEnumerable<CartItemUpdateRequest> cartItemRequests, Guid cartId)
         {
-            var batch =_database.CreateBatch();
+            using var activity = _activitySource.StartActivity($"{nameof(CartService)}: UpdateCartItem", ActivityKind.Server);
+            var batch = _database.CreateBatch();
             var tasks = new List<Task>();
-           
+
             foreach (var cartItemRequest in cartItemRequests)
             {
                 var id = cartItemRequest.CartItemId.ToString();
-                var data = new HashEntry[] 
+                var data = new HashEntry[]
                 {
                         new HashEntry(nameof(cartItemRequest.Price), cartItemRequest.Price),
                         new HashEntry(nameof(cartItemRequest.Currency), cartItemRequest.Currency),
                 };
-               tasks.Add(batch.HashSetAsync($"h-cpq-{id}", data));
+                tasks.Add(batch.HashSetAsync($"h-cpq-{id}", data));
             }
             batch.Execute();
             await Task.WhenAll(tasks);
@@ -159,11 +161,12 @@ namespace CartServicePOC.Service
 
         public async Task<CartDetailResponse> GetCartItems(Guid id)
         {
+            using var activity = _activitySource.StartActivity($"{nameof(CartService)}: GetCartItems", ActivityKind.Server);
             var cart = new CartDetailResponse
             {
                 CartId = id,
                 StatusId = CartStatus.Created,
-                CartItems= new List<CartItemInfo>()
+                CartItems = new List<CartItemInfo>()
             };
             var hasEntry = await _database.HashGetAllAsync($"h-cpq-{id}");
             var cartInfo = RedisExtension.ConvertFromRedis<CartDetailResponse>(hasEntry);
