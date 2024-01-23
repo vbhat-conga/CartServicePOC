@@ -1,8 +1,11 @@
-﻿using CartServicePOC.DataModel;
+﻿using CartServicePOC.Controllers;
+using CartServicePOC.DataModel;
 using CartServicePOC.Extensions;
+using CartServicePOC.Helper;
 using CartServicePOC.Model;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace CartServicePOC.Service
@@ -11,6 +14,7 @@ namespace CartServicePOC.Service
     {
         private readonly CartDbContext _dbContext;
         private readonly IDatabase _database;
+        private readonly ActivitySource _activitySource = new(Instrumentation.ActivitySourceName);
         public CartService(CartDbContext dbContext)
         {
             _dbContext = dbContext;
@@ -25,10 +29,14 @@ namespace CartServicePOC.Service
                 CartId = id,
                 StatusId = CartStatus.Created
             };
-            var hasEntry = await _database.HashGetAllAsync($"h-cpq-{id}");
-            var cartInfo = RedisExtension.ConvertFromRedis<CartData>(hasEntry);
-            if (cartInfo != null)
-                return cartInfo;
+            using var cacheActivity = _activitySource.StartActivity($"{nameof(CartService)}: GetCart : Getting from cache", ActivityKind.Server);
+            {
+                cacheActivity?.AddTag("CartId", id);
+                var hasEntry = await _database.HashGetAllAsync($"h-cpq-{id}");
+                var cartInfo = RedisExtension.ConvertFromRedis<CartData>(hasEntry);
+                if (cartInfo != null)
+                    return cartInfo;
+            }
             //var sets = await _database.SetMembersAsync($"se-cpq-{id}");
             //var batch = _database.CreateBatch();
             //var tasks = new List<Task<RedisValue>>();
@@ -98,23 +106,41 @@ namespace CartServicePOC.Service
 
         public async Task<Guid> SaveCart(CartData cart)
         {
-            var hashEntry = RedisExtension.ToHashEntries(cart);
-            await _database.HashSetAsync($"h-cpq-{cart.CartId}", hashEntry);
-            await _dbContext.Carts.AddAsync(cart);
-            await _dbContext.SaveChangesAsync();
+            using var cacheActivity = _activitySource.StartActivity($"{nameof(CartService)} : Saving to cache", ActivityKind.Server);
+            {
+                cacheActivity?.AddTag("CartId", cart.CartId);
+                var hashEntry = RedisExtension.ToHashEntries(cart);
+                await _database.HashSetAsync($"h-cpq-{cart.CartId}", hashEntry);
+            }
+            using var sqlActivity = _activitySource.StartActivity($"{nameof(CartService)} : Saving to sql", ActivityKind.Server);
+            {
+                sqlActivity?.AddTag("CartId", cart.CartId);
+                await _dbContext.Carts.AddAsync(cart);
+                await _dbContext.SaveChangesAsync();
+            }
+
             return cart.CartId;
         }
 
         public async Task<bool> UpdateCart(CartUpdateRequest cartUpdateRequest)
         {
-            var hashEntry = RedisExtension.ToHashEntries(cartUpdateRequest);
-            await _database.HashSetAsync($"h-cpq-{cartUpdateRequest.CartId}", hashEntry);
-            await _dbContext.Carts
-                            .Where(u => u.CartId == cartUpdateRequest.CartId)
-                            .ExecuteUpdateAsync(s => s
-                            .SetProperty(b => b.Price, cartUpdateRequest.Price)
-                            .SetProperty(b => b.StatusId, cartUpdateRequest.StatusId));
-            await _dbContext.SaveChangesAsync();
+            using var cacheActivity = _activitySource.StartActivity($"{nameof(CartService)}: UpdateCart : Saving to cache", ActivityKind.Server);
+            {
+                cacheActivity?.AddTag("CartId", cartUpdateRequest.CartId);
+                var hashEntry = RedisExtension.ToHashEntries(cartUpdateRequest);
+                await _database.HashSetAsync($"h-cpq-{cartUpdateRequest.CartId}", hashEntry);
+            }
+            using var sqlActivity = _activitySource.StartActivity($"{nameof(CartService)} : UpdateCart : Saving to sql", ActivityKind.Server);
+            {
+                sqlActivity?.AddTag("CartId", cartUpdateRequest.CartId);
+                await _dbContext.Carts
+                .Where(u => u.CartId == cartUpdateRequest.CartId)
+                .ExecuteUpdateAsync(s => s
+                .SetProperty(b => b.Price, cartUpdateRequest.Price)
+                .SetProperty(b => b.StatusId, cartUpdateRequest.StatusId));
+                await _dbContext.SaveChangesAsync();
+            }
+         
             return true;
         }
     }

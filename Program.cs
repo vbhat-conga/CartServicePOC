@@ -1,6 +1,12 @@
 using CartServicePOC.DataModel;
+using CartServicePOC.Helper;
 using CartServicePOC.Service;
 using Microsoft.EntityFrameworkCore;
+using OpenTelemetry;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using System.IdentityModel.Tokens.Jwt;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -31,6 +37,43 @@ namespace CartServicePOC
                 {
                     opt.CommandTimeout(60);
                 }));
+            var tracingExporter = builder.Configuration.GetValue("UseTracingExporter", defaultValue: "console")!.ToLowerInvariant();
+
+            // Build a resource configuration action to set service information.
+            Action<ResourceBuilder> configureResource = r => r.AddService(
+                serviceName: builder.Configuration.GetValue("ServiceName", defaultValue: "cart-api")!,
+                serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+                serviceInstanceId: Environment.MachineName);
+            JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
+            // Configure OpenTelemetry tracing & metrics with auto-start using the
+            // AddOpenTelemetry extension from OpenTelemetry.Extensions.Hosting.
+            builder.Services.AddOpenTelemetry()
+                .ConfigureResource(configureResource)
+                .WithTracing(appBuilder =>
+                {
+                    // Tracing
+                    // Ensure the TracerProvider subscribes to any custom ActivitySources.
+                    appBuilder
+                        .AddSource(Instrumentation.ActivitySourceName)
+                        .AddHttpClientInstrumentation()
+                        .AddAspNetCoreInstrumentation();
+
+                    switch (tracingExporter)
+                    {
+                        case "otlp":
+                            appBuilder.AddOtlpExporter(otlpOptions =>
+                            {
+                                // Use IConfiguration directly for Otlp exporter endpoint option.
+                                otlpOptions.Endpoint = new Uri(builder.Configuration.GetValue("Otlp:Endpoint", defaultValue: "http://localhost:4317/api/traces")!);
+                                otlpOptions.Protocol = OtlpExportProtocol.Grpc;
+                                otlpOptions.ExportProcessorType = ExportProcessorType.Batch;
+                            });
+                            break;
+
+                        default:
+                            break;
+                    }
+                });
             var app = builder.Build();
 
             // Configure the HTTP request pipeline.
