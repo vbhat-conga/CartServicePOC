@@ -10,16 +10,26 @@ using System.Text.Json;
 
 namespace CartServicePOC.Service
 {
+    //TODO: cart is getting saved in Db and redis. DO we need?
+    //TODO: Redis data structure to use.
+    //Exception, validation etc.
     public class CartService : ICartService
     {
+        private readonly string _adminServiceUrl;
+        private readonly IConfiguration _configuration;
         private readonly CartDbContext _dbContext;
         private readonly IDatabase _database;
+        private readonly IConnectionMultiplexer _connectionMultiplexer;
+        private readonly IHttpClientFactory _httpClientFactory;
         private readonly ActivitySource _activitySource = new(Instrumentation.ActivitySourceName);
-        public CartService(CartDbContext dbContext)
+        public CartService(CartDbContext dbContext, IConnectionMultiplexer connectionMultiplexer, IHttpClientFactory httpClientFactory, IConfiguration configuration)
         {
-            _dbContext = dbContext;
-            var redis = ConnectionMultiplexer.Connect("localhost:6379");
-            _database = redis.GetDatabase();
+            _configuration = configuration;
+            _dbContext = dbContext;            
+            _connectionMultiplexer = connectionMultiplexer;
+            _database = _connectionMultiplexer.GetDatabase();
+            _httpClientFactory = httpClientFactory;
+            _adminServiceUrl = _configuration.GetValue<string>("adminUrl") ?? "https://localhost:7190/api";
         }
 
         public async Task<CartData> GetCart(Guid id)
@@ -37,60 +47,8 @@ namespace CartServicePOC.Service
                 if (cartInfo != null)
                     return cartInfo;
             }
-            //var sets = await _database.SetMembersAsync($"se-cpq-{id}");
-            //var batch = _database.CreateBatch();
-            //var tasks = new List<Task<RedisValue>>();
-            //foreach (var set in sets)
-            //{
-            //    tasks.Add(batch.HashGetAsync($"h-cpq-{set}", new RedisValue("Price")));
-            //}
-            //batch.Execute();
-            //var values = await Task.WhenAll(tasks);
-            //if (values.All(x => !x.IsNullOrEmpty))
-            //{
-            //    cart.StatusId = CartStatus.Priced;
-            //}
             return cart;
         }
-
-        public async Task<CartData> GetCartStatus(Guid id)
-        {
-            var cart = new CartData
-            {
-                CartId = id,
-                StatusId = CartStatus.Created
-            };
-            var sets = await _database.SetMembersAsync($"se-cpq-{id}");
-            var batch = _database.CreateBatch();
-            var tasks = new List<Task<RedisValue>>();
-            foreach ( var set in sets)
-            {
-                tasks.Add(batch.HashGetAsync($"h-cpq-{set}", new RedisValue("price")));
-            }
-            batch.Execute();
-            var values = await Task.WhenAll(tasks);
-            if(values.All(x=>!x.IsNullOrEmpty))
-            {
-                cart.StatusId=CartStatus.Priced;
-            }
-            return cart;
-            //var hashEntries = await _database.HashGetAllAsync($"h-cpq-{id}");
-            //var cart = RedisExtension.ConvertFromRedis<CartData>(hashEntries);
-            //if (cart == null)
-            //{
-            //    var result = await _dbContext.Carts.FindAsync(id);
-            //    if (result == null)
-            //    {
-            //        return new CartData();
-            //    }
-            //    return result;
-            //}
-            //else
-            //{
-            //    return cart;
-            //}
-        }
-
         public async Task<bool> IsCartExists(Guid id)
         {
             var cart = await _dbContext.Carts.FindAsync(id);
@@ -100,8 +58,13 @@ namespace CartServicePOC.Service
 
         public async Task<bool> IsPriceIdExists(Guid id)
         {
-            // make admin service call.
-            return await Task.FromResult(true);
+            var client = _httpClientFactory.CreateClient();
+            var httpResponse = await client.GetAsync($"{_adminServiceUrl}/pricelist/{id}");
+            if (httpResponse != null && httpResponse.IsSuccessStatusCode)
+            {
+                return true;
+            }
+            return false;
         }
 
         public async Task<Guid> SaveCart(CartData cart)

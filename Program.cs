@@ -1,4 +1,5 @@
 using CartServicePOC.DataModel;
+using CartServicePOC.Extensions;
 using CartServicePOC.Helper;
 using CartServicePOC.Service;
 using Microsoft.EntityFrameworkCore;
@@ -6,6 +7,7 @@ using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using StackExchange.Redis;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -17,7 +19,6 @@ namespace CartServicePOC
         public static void Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
-
             // Add services to the container.
             builder.Services.AddRouting(options => options.LowercaseUrls = true);
             builder.Services.AddControllers()
@@ -32,13 +33,15 @@ namespace CartServicePOC
             builder.Services.AddSwaggerGen();
             builder.Services.AddTransient<ICartService, CartService>();
             builder.Services.AddTransient<ICartItemService, CartItemService>();
+            builder.Services.AddHttpClient();
             builder.Services.AddDbContext<CartDbContext>(options =>
                 options.UseSqlServer(builder.Configuration.GetConnectionString("cpqconnectionstring"), opt =>
                 {
                     opt.CommandTimeout(60);
                 }));
             var tracingExporter = builder.Configuration.GetValue("UseTracingExporter", defaultValue: "console")!.ToLowerInvariant();
-
+            var connection = ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")?? "127.0.0.1:6379");
+            builder.Services.AddSingleton<IConnectionMultiplexer>(connection);
             // Build a resource configuration action to set service information.
             Action<ResourceBuilder> configureResource = r => r.AddService(
                 serviceName: builder.Configuration.GetValue("ServiceName", defaultValue: "cart-api")!,
@@ -56,7 +59,9 @@ namespace CartServicePOC
                     appBuilder
                         .AddSource(Instrumentation.ActivitySourceName)
                         .AddHttpClientInstrumentation()
-                        .AddAspNetCoreInstrumentation();
+                        .AddAspNetCoreInstrumentation()
+                        .AddRedisInstrumentation()
+                        .AddSqlClientInstrumentation();
 
                     switch (tracingExporter)
                     {
@@ -75,14 +80,13 @@ namespace CartServicePOC
                     }
                 });
             var app = builder.Build();
-
+            app.UseCorrelationId();
             // Configure the HTTP request pipeline.
             if (app.Environment.IsDevelopment())
             {
                 app.UseSwagger();
                 app.UseSwaggerUI();
             }
-
             app.UseHttpsRedirection();
 
             app.UseAuthorization();

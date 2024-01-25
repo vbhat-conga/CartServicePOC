@@ -9,64 +9,63 @@ using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace CartServicePOC.Service
 {
+    // TODO: Exception handling
+    // Redis data structure to use?
+    // Do we need to persist in DB?
     public class CartItemService : ICartItemService
     {
         private readonly CartDbContext _dbContext;
         private readonly IDatabase _database;
         private readonly ILogger<CartItemService> _logger;
+        private readonly IConnectionMultiplexer _connectionMultiplexer;
         private readonly ActivitySource _activitySource = new(Instrumentation.ActivitySourceName);
-        public CartItemService(CartDbContext dbContext, ILogger<CartItemService> logger)
+        public CartItemService(CartDbContext dbContext, ILogger<CartItemService> logger, IConnectionMultiplexer connectionMultiplexer)
         {
             _dbContext = dbContext;
-            var redis = ConnectionMultiplexer.Connect("localhost:6379");
-            _database = redis.GetDatabase();
+            _connectionMultiplexer = connectionMultiplexer;
+            _database = _connectionMultiplexer.GetDatabase();
             _logger = logger;
-
         }
 
         public async Task<IEnumerable<Guid>> AddLineItem(IEnumerable<CartItemRequest> cartItemRequests, Guid cartId)
         {
             using var activity = _activitySource.StartActivity($"{nameof(CartService)}: AddLineItem", ActivityKind.Server);
-            var batch = _database.CreateBatch();
-            var taskList = new List<Task>();
-            var batch1 = _database.CreateBatch();
-            var taskList2 = new List<Task<bool>>();
-            var itemData = new List<CartItemData>();
-            cartItemRequests.ToList().ForEach(cartItem =>
             {
-                var item = new CartItemData
+                var batch = _database.CreateBatch();
+                var taskList = new List<Task>();
+                var batch1 = _database.CreateBatch();
+                var taskList2 = new List<Task<bool>>();
+                var itemData = new List<CartItemData>();
+                cartItemRequests.ToList().ForEach(cartItem =>
                 {
-                    CartId = cartId,
-                    CartItemId = cartItem.ItemId,
-                    IsPrimaryLine = cartItem.IsPrimaryLine,
-                    LineType = cartItem.LineType,
-                    Quantity = cartItem.Quantity,
-                    PrimaryTaxLineNumber = cartItem.PrimaryTaxLineNumber,
-                    ProductId = cartItem.Product.Id
-                };
-                itemData.Add(item);
-                var id = item.CartItemId.ToString();
-                var hashEntry = RedisExtension.ToHashEntries(item);
-                taskList.Add(batch.HashSetAsync($"h-cpq-{id}", hashEntry));
-                taskList2.Add(batch1.SetAddAsync($"se-cpq-{cartId}", id));
-            });
+                    var item = new CartItemData
+                    {
+                        CartId = cartId,
+                        CartItemId = cartItem.ItemId,
+                        IsPrimaryLine = cartItem.IsPrimaryLine,
+                        LineType = cartItem.LineType,
+                        Quantity = cartItem.Quantity,
+                        PrimaryTaxLineNumber = cartItem.PrimaryTaxLineNumber,
+                        ProductId = cartItem.Product.Id
+                    };
+                    itemData.Add(item);
+                    var id = item.CartItemId.ToString();
+                    var hashEntry = RedisExtension.ToHashEntries(item);
+                    taskList.Add(batch.HashSetAsync($"h-cpq-{id}", hashEntry));
+                    taskList2.Add(batch1.SetAddAsync($"se-cpq-{cartId}", id));
+                });
 
-            batch.Execute();
-            batch1.Execute();
-            //var jsonString = JsonSerializer.Serialize(itemData);
-            //var redisTask = _database.StringSetAsync($"s-cpq-{CartId}-lines", jsonString);
-            // var sqlTask = _dbContext.CartItemDatas.AddRangeAsync(itemData);
-            //await redisTask;
-            await Task.WhenAll(taskList);
-            await Task.WhenAll(taskList2);
-            //await sqlTask;
-            //await _dbContext.SaveChangesAsync();
-
-            return itemData.Select(x => x.CartItemId);
+                batch.Execute();
+                batch1.Execute();
+                await Task.WhenAll(taskList);
+                await Task.WhenAll(taskList2);
+                return itemData.Select(x => x.CartItemId);
+            }
         }
 
 
-
+        //TODO : we can split lines and publish a message so that
+        // multiple config and pricing does its job on sub set and then need to aggregate.
         public async Task PublishMessage(Guid cartId, IEnumerable<CartItemRequest> cartItemRequest)
         {
             using var activity = _activitySource.StartActivity($"{nameof(CartService)}: PublishMessage", ActivityKind.Server);
@@ -81,11 +80,11 @@ namespace CartServicePOC.Service
                     CartItems = cartItemRequest,
                     PriceListId = result.PriceListId
                 };
+                InstrumentationHelper.AddActivityToRequest(activity, cartMessage, "POST api/{cartid}/items", "PublishMessage");
                 var nameValueEntry = new NameValueEntry[]
                 {
                 new NameValueEntry(nameof(cartItemRequest),JsonSerializer.Serialize(cartMessage))
                 };
-
                 await _database.StreamAddAsync("config-stream", nameValueEntry);
             }
         }
@@ -107,55 +106,7 @@ namespace CartServicePOC.Service
                 tasks.Add(batch.HashSetAsync($"h-cpq-{id}", data));
             }
             batch.Execute();
-            await Task.WhenAll(tasks);
-            //await _database.ha
-            //await _database.HashSetAsync($"h-cpq-{cartId}", new HashEntry[] { new HashEntry("StatusId", CartStatus.Priced.ToString()) });
-            //var result = await _database.StringGetAsync($"s-cpq-{cartId}-lines");
-            //if(!result.IsNullOrEmpty)
-            //{
-            //  var redisCartItems = JsonSerializer.Deserialize<List<CartItemData>>(result!);
-            //  if(redisCartItems != null && redisCartItems.Any())
-            //    {
-            //        foreach(var item in redisCartItems)
-            //        {
-            //            var newItem = cartItemRequests.FirstOrDefault(y => y.CartItemId == item.CartItemId);
-            //            item.Price = newItem.Price;
-            //            item.Currency = newItem.Currency;
-            //        }
-            //        var jsonString = JsonSerializer.Serialize(redisCartItems);
-            //        if(await _database.StringSetAsync($"s-cpq-{cartId}-lines", jsonString))
-            //        {
-            //            await
-            //        }
-            //    }
-            //}
-            //var cartItems = _dbContext.CartItemDatas.Where(x => x.CartId == cartId).ToList();
-            //if (cartItems != null && cartItems.Any())
-            //{
-            //    cartItems.ForEach(async x =>
-            //    {
-            //        var updateItem = cartItemRequests.FirstOrDefault(y => x.CartItemId == y.CartItemId);
-            //        if (updateItem != null)
-            //        {
-            //            x.Price = updateItem.Price;
-            //            x.Currency = updateItem.Currency;
-            //            await _dbContext.CartItemDatas
-            //                .Where(u => u.CartItemId == x.CartItemId)
-            //                .ExecuteUpdateAsync(s => s
-            //                .SetProperty(b => b.Price, x.Price)
-            //                .SetProperty(b => b.Currency, x.Currency));
-            //        }
-            //    });
-            //    await _dbContext.CartItemDatas.LoadAsync();
-            //    if (await _dbContext.CartItemDatas.Where(item=>item.CartId==cartId).AllAsync(x => x.Price != null))
-            //    {
-            //        await _dbContext.Carts
-            //              .Where(u => u.CartId == cartId)
-            //              .ExecuteUpdateAsync(s => s
-            //              .SetProperty(b => b.StatusId, CartStatus.Priced));
-            //    }
-            //    return true;
-            //}
+            await Task.WhenAll(tasks);          
             return true;
         }
 
