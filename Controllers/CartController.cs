@@ -9,6 +9,12 @@ using System.Net;
 
 namespace CartServicePOC.Controllers
 {
+    // TODO: Exception handling
+    // Validation.
+    // Model(view) VS Data model folder, today it has been just copied with very few change.
+    // Data store, today getting stored in Redis
+    // Remove unused dependency.
+    // Refactoring
     [Route("api/[controller]")]
     [ApiController]
     public class CartController : ControllerBase
@@ -26,16 +32,16 @@ namespace CartServicePOC.Controllers
         }
 
         [HttpPost]
-        public async Task<ActionResult<ApiResponse<CreateCartResponse>>> CreateCart(CartRequest createCartRequests)
+        public async Task<ActionResult> CreateCart(CartRequest createCartRequests)
         {
             using var activity = _activitySource.StartActivity($"{nameof(CartController)} : CreateCart", ActivityKind.Server);
             if (!ModelState.IsValid)
             {
-                return BadRequest(ModelState);
+                return BadRequest(new ApiResponse<string>(string.Empty, "400", "Validation error"));
             }
             if (!await _cartService.IsPriceIdExists(createCartRequests.PriceList.Id))
             {
-                return BadRequest("Price list id doesn't exist");
+                return BadRequest(new ApiResponse<string>(string.Empty, "400", "Price list id doesn't exist"));
             }
             var cartdata = new CartData
             {
@@ -51,11 +57,6 @@ namespace CartServicePOC.Controllers
             return Created("", apiResponse);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="cartItemRequest"></param>
-        /// <returns></returns>
         [HttpPost("{id}/items")]
         public async Task<ActionResult<ApiResponse<string>>> AddCartItem([FromRoute] Guid id, List<CartItemRequest> cartItemRequests)
         {
@@ -63,7 +64,7 @@ namespace CartServicePOC.Controllers
             activity?.SetTag("CartId", id);
             if (!ModelState.IsValid)
             {
-                return BadRequest(ModelState);
+                return BadRequest(new ApiResponse<string>(string.Empty, "400", "Validation error"));
             }
             await _cartItemService.PublishMessage(id, cartItemRequests);
             await _cartItemService.AddLineItem(cartItemRequests, id);
@@ -74,19 +75,14 @@ namespace CartServicePOC.Controllers
         }
 
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="cartItemRequest"></param>
-        /// <returns></returns>
         [HttpPut("{id}/items")]
-        public async Task<ActionResult<ApiResponse<string>>> UpdateCartItems([FromRoute] Guid id, List<CartItemUpdateRequest> cartItemUpdates)
+        public async Task<ActionResult> UpdateCartItems([FromRoute] Guid id, List<CartItemUpdateRequest> cartItemUpdates)
         {
             using var activity = _activitySource.StartActivity($"{nameof(CartController)} : UpdateCartItems", ActivityKind.Server);
             activity?.SetTag("CartId", id);
             if (!ModelState.IsValid)
             {
-                return BadRequest(ModelState);
+                return BadRequest(new ApiResponse<string>(string.Empty, "400", "Validation error"));
             }
             if (await _cartItemService.UpdateCartItem(cartItemUpdates, id))
             {
@@ -99,18 +95,15 @@ namespace CartServicePOC.Controllers
 
             return StatusCode(500);
         }
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="cartItemRequest"></param>
-        /// <returns></returns>
+
+
         [HttpGet("{id}/status")]
-        public async Task<ActionResult<ApiResponse<CartData>>> GetCartStatus([FromRoute] Guid id)
+        public async Task<ActionResult> GetCartStatus([FromRoute] Guid id)
         {
             using var activity = _activitySource.StartActivity($"{nameof(CartController)} : UpdateCartItems", ActivityKind.Server);
             if (!await _cartService.IsCartExists(id))
             {
-                return BadRequest("cart id doesn't exist");
+                return BadRequest(new ApiResponse<string>(string.Empty, "400", "cart id doesn't exist"));
             }
 
             var cart = await _cartService.GetCart(id);
@@ -120,18 +113,13 @@ namespace CartServicePOC.Controllers
             return Ok(apiResponse);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="cartItemRequest"></param>
-        /// <returns></returns>
         [HttpPut("{id}")]
-        public async Task<ActionResult<ApiResponse<string>>> UpdateCart([FromRoute] Guid id, CartUpdateRequest cartUpdateRequest)
+        public async Task<ActionResult> UpdateCart([FromRoute] Guid id, CartUpdateRequest cartUpdateRequest)
         {
 
             if (!await _cartService.IsCartExists(id))
             {
-                return BadRequest("cart id doesn't exist");
+                return BadRequest(new ApiResponse<string>(string.Empty, "400", "cart id doesn't exist"));
             }
 
             if (await _cartService.UpdateCart(cartUpdateRequest))
@@ -144,12 +132,12 @@ namespace CartServicePOC.Controllers
         }
 
         [HttpGet("{id}/items")]
-        public async Task<ActionResult<ApiResponse<CartDetailResponse>>> GetLineItem([FromRoute] Guid id)
+        public async Task<ActionResult> GetLineItem([FromRoute] Guid id)
         {
 
             if (!await _cartService.IsCartExists(id))
             {
-                return BadRequest("cart id doesn't exist");
+                return BadRequest(new ApiResponse<string>(string.Empty, "400", "cart id doesn't exist"));
             }
             var cartInfo = await _cartItemService.GetCartItems(id);
             if (cartInfo != null)
