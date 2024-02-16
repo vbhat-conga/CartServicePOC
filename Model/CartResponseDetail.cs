@@ -2,19 +2,19 @@
 
 namespace CartServicePOC.Model
 {
-    public class CartDetailResponse
+    public class CartResponseDetail
     {
         public Guid CartId { get; set; }
         public string Name { get; set; }
         public Guid PriceListId { get; set; }
-        public CartStatus StatusId { get; set; }
+        public CartStatus Status { get; set; }
 
-        public IEnumerable<CartItemInfo> CartItems { get; set; }
+        public IEnumerable<CartItemResponse> CartItems { get; set; }
 
         public double Price { get; set; } = 0.0;
     }
 
-    public class CartItemInfo
+    public class CartItemResponse
     {
         public Guid CartItemId { get; set; }
         public bool IsPrimaryLine { get; set; }

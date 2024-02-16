@@ -1,20 +1,23 @@
-﻿using System.Text.Json.Serialization;
+﻿using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CartServicePOC.Model
 {
     public class ApiResponse<T>
     {
-        public ApiResponse(T data, string statusCode, string? errorMessage=null)
+        public ApiResponse(T data, int statusCode)
         {
             Data = data;
             StatusCode = statusCode;
-            ErrorMessage = errorMessage;
         }
 
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public T Data { get; set; }
-        public string StatusCode { get; set; }
+        public int StatusCode { get; set; }
 
-        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public string? ErrorMessage { get; set; }
+        public override string ToString()
+        {
+            return JsonSerializer.Serialize(this);
+        }
     }
 }

@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Serialization;
+﻿using CartServicePOC.DataModel;
+using System.Text.Json.Serialization;
 
 namespace CartServicePOC.Model
 {
@@ -14,7 +15,17 @@ namespace CartServicePOC.Model
     public class CartMessage: BaseMessage
     {
         public Guid CartId { get; set; }
-        public IEnumerable<CartItemRequest> CartItems { get; set; }
+        public IEnumerable<CartItemResponse> CartItems { get; set; }
         public Guid PriceListId { get; set; }
+        public CartAction CartAction { get; set; } = CartAction.ConfigureAndPrice;
+
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum CartAction
+    {
+        ConfigureAndPrice,
+        Price,
+        Reprice
     }
 }

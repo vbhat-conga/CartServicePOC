@@ -5,7 +5,7 @@
         public Guid CartId { get; set; }
         public string Name { get; set; }
         public Guid PriceListId { get; set; }
-        public CartStatus StatusId { get; set; }
+        public CartStatus Status { get; set; }
 
         public IEnumerable<CartItemData> CartItems { get; set; }
 

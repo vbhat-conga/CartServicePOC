@@ -1,11 +1,10 @@
-﻿using CartServicePOC.DataModel;
+﻿using CartServicePOC.Exceptions;
 using CartServicePOC.Helper;
 using CartServicePOC.Model;
-using CartServicePOC.Service;
-using Microsoft.AspNetCore.Http;
+using CartServicePOC.Service.Cart;
+using CartServicePOC.Service.CartItem;
 using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics;
-using System.Net;
 
 namespace CartServicePOC.Controllers
 {
@@ -32,121 +31,116 @@ namespace CartServicePOC.Controllers
         }
 
         [HttpPost]
-        public async Task<ActionResult> CreateCart(CartRequest createCartRequests)
+        public async Task<ActionResult> CreateCart(CreateCartRequest createCartRequests)
         {
             using var activity = _activitySource.StartActivity($"{nameof(CartController)} : CreateCart", ActivityKind.Server);
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(new ApiResponse<string>(string.Empty, "400", "Validation error"));
-            }
             if (!await _cartService.IsPriceIdExists(createCartRequests.PriceList.Id))
             {
-                return BadRequest(new ApiResponse<string>(string.Empty, "400", "Price list id doesn't exist"));
+                throw new PriceListIdNotFoundException($"Price list id : {createCartRequests.PriceList.Id} doesn't exist");
             }
-            var cartdata = new CartData
-            {
-                CartId = Guid.NewGuid(),
-                PriceListId = createCartRequests.PriceList.Id,
-                Name = createCartRequests.Name,
-                StatusId = CartStatus.Created
-            };
-            var id = await _cartService.SaveCart(cartdata);
+            var id = await _cartService.SaveCart(createCartRequests);
             var apiResponse = new ApiResponse<CreateCartResponse>(
                 new CreateCartResponse { CartId = id },
-                "201");
-            return Created("", apiResponse);
-        }
-
-        [HttpPost("{id}/items")]
-        public async Task<ActionResult<ApiResponse<string>>> AddCartItem([FromRoute] Guid id, List<CartItemRequest> cartItemRequests)
-        {
-            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : AddCartItem", ActivityKind.Server);
-            activity?.SetTag("CartId", id);
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(new ApiResponse<string>(string.Empty, "400", "Validation error"));
-            }
-            await _cartItemService.PublishMessage(id, cartItemRequests);
-            await _cartItemService.AddLineItem(cartItemRequests, id);
-            var apiResponse = new ApiResponse<string>(
-                "Success",
-                "201");
-            return Created("", apiResponse);
-        }
-
-
-        [HttpPut("{id}/items")]
-        public async Task<ActionResult> UpdateCartItems([FromRoute] Guid id, List<CartItemUpdateRequest> cartItemUpdates)
-        {
-            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : UpdateCartItems", ActivityKind.Server);
-            activity?.SetTag("CartId", id);
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(new ApiResponse<string>(string.Empty, "400", "Validation error"));
-            }
-            if (await _cartItemService.UpdateCartItem(cartItemUpdates, id))
-            {
-
-                var apiResponse = new ApiResponse<string>(
-                    "Success",
-                    "200");
-                return Created("", apiResponse);
-            }
-
-            return StatusCode(500);
+                201);
+            return Created(Request.Path, apiResponse);
         }
 
 
         [HttpGet("{id}/status")]
         public async Task<ActionResult> GetCartStatus([FromRoute] Guid id)
         {
-            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : UpdateCartItems", ActivityKind.Server);
+            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : GetCartStatus", ActivityKind.Server);
+            activity?.SetTag("CartId", id);
             if (!await _cartService.IsCartExists(id))
             {
-                return BadRequest(new ApiResponse<string>(string.Empty, "400", "cart id doesn't exist"));
+                throw new CartNotFoundException($"cart with cart id : {id} doesn't exist");
             }
-
             var cart = await _cartService.GetCart(id);
-
-            var apiResponse = new ApiResponse<CartData>(cart,
-                "200");
+            var apiResponse = new ApiResponse<CartResponseDetail>(cart,
+                200);
             return Ok(apiResponse);
         }
 
         [HttpPut("{id}")]
-        public async Task<ActionResult> UpdateCart([FromRoute] Guid id, CartUpdateRequest cartUpdateRequest)
+        public async Task<ActionResult> UpdateCart([FromRoute] Guid id, UpdateCartRequest cartUpdateRequest)
         {
-
+            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : UpdateCart", ActivityKind.Server);
+            activity?.SetTag("CartId", id);
             if (!await _cartService.IsCartExists(id))
             {
-                return BadRequest(new ApiResponse<string>(string.Empty, "400", "cart id doesn't exist"));
+                throw new CartNotFoundException($"cart with cart id : {id} doesn't exist");
             }
-
             if (await _cartService.UpdateCart(cartUpdateRequest))
             {
-                var apiResponse = new ApiResponse<string>("Sucess",
-                "200");
-                return Ok(apiResponse);
+                return NoContent();
             }
-            return StatusCode(500);
+            throw new Exception("Error while updating cart");
         }
 
-        [HttpGet("{id}/items")]
-        public async Task<ActionResult> GetLineItem([FromRoute] Guid id)
+        [HttpGet("{id}")]
+        public async Task<ActionResult> GetCartById([FromRoute] Guid id, [FromQuery]GetCartQueryParameter getCartQueryParameter)
         {
-
+            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : GetCartById", ActivityKind.Server);
+            activity?.SetTag("CartId", id);
             if (!await _cartService.IsCartExists(id))
+                throw new CartNotFoundException($"cart with cart id : {id} doesn't exist");
+            
+            if(getCartQueryParameter.IncludeLineItems)
             {
-                return BadRequest(new ApiResponse<string>(string.Empty, "400", "cart id doesn't exist"));
+                var cartInfo = await _cartItemService.GetCartItems(id);
+                if (cartInfo != null)
+                {
+                    var cartdetailResponse = new ApiResponse<CartResponseDetail>(cartInfo, 200);
+                    return Ok(cartdetailResponse);
+                }
             }
-            var cartInfo = await _cartItemService.GetCartItems(id);
-            if (cartInfo != null)
+            var cart = await _cartService.GetCart(id);
+            var cartResponse = new ApiResponse<CartResponseDetail>(cart,200);
+            return Ok(cartResponse);
+        }
+
+
+        [HttpPost("{id}/items")]
+        public async Task<ActionResult<ApiResponse<string>>> AddCartItem([FromRoute] Guid id, List<AddCartItemRequest> cartItemRequests)
+        {
+            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : AddCartItem", ActivityKind.Server);
+            activity?.SetTag("CartId", id);
+            await _cartItemService.PublishMessage(id, cartItemRequests);
+            await _cartItemService.AddLineItem(cartItemRequests, id);
+            var apiResponse = new ApiResponse<string>("Success",201);
+            return Created(Request.Path, apiResponse);
+        }
+
+
+        [HttpPatch("{id}/items")]
+        public async Task<ActionResult> UpdateCartItems([FromRoute] Guid id, UpdateCartItemRequest cartItemUpdates)
+        {
+            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : UpdateCartItems", ActivityKind.Server);
+            activity?.SetTag("CartId", id);
+            if (await _cartItemService.UpdateCartItem(cartItemUpdates, id))
             {
-                var apiResponse = new ApiResponse<CartDetailResponse>(cartInfo,
-                   "200");
+                var apiResponse = new ApiResponse<string>("Success",200);
+                return NoContent();
+            }
+            throw new System.Exception("Error while updating cart items");
+        }
+
+        [HttpPost("{id}/items/query")]
+        public async Task<ActionResult> GetLineItem([FromRoute] Guid id, GetItemsRequest lineItemQueryRequest)
+        {
+            using var activity = _activitySource.StartActivity($"{nameof(CartController)} : GetLineItem", ActivityKind.Server);
+            activity?.SetTag("CartId", id);
+            if (!await _cartService.IsCartExists(id))
+                throw new CartNotFoundException($"cart with cart id : {id} doesn't exist");
+
+            var cartItemInfo = await _cartItemService.GetCartItemsByIds(id, lineItemQueryRequest);
+            if (cartItemInfo != null)
+            {
+                var apiResponse = new ApiResponse<IEnumerable<CartItemResponse>>(cartItemInfo,
+                   200);
                 return Ok(apiResponse);
             }
-            return StatusCode(500);
+            throw new System.Exception("Error while getting cart items");
         }
     }
 }

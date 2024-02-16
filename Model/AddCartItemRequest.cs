@@ -6,7 +6,7 @@ using JsonIgnoreAttribute = System.Text.Json.Serialization.JsonIgnoreAttribute;
 
 namespace CartServicePOC.Model
 {
-    public class CartItemRequest
+    public class AddCartItemRequest
     {
         [Required]
         public Guid ItemId { get; set; }

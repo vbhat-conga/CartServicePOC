@@ -64,7 +64,7 @@ namespace CartServicePOC.DataModel
                 .HasMaxLength(50);
 
             modelBuilder.Entity<CartData>()
-                .Property(c => c.StatusId)
+                .Property(c => c.Status)
                 .HasConversion<int>();
 
             modelBuilder.Entity<CartStatusType>()

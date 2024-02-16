@@ -2,7 +2,7 @@
 
 namespace CartServicePOC.Model
 {
-    public class CartRequest
+    public class CreateCartRequest
     {
         [Required]
         public DateTime EffectiveDate { get; set; }
